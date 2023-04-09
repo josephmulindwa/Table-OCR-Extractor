@@ -11,5 +11,10 @@ To figure out which text is in a given cell (row, column). You can use the table
 OR 
 You could look into table.celltext_positions and table.cell_textdata variables.
 
+# Dependencies
+- pytesseract
+- OpenCV
+- Numpy
+- pymupdf
 
 Report Bugs to: <a href="josephmulindwa490@gmail.com">josephmulindwa490@gmail.com</a>

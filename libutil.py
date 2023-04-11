@@ -1,5 +1,5 @@
 '''PDF Analysis utility functions and bounding box operations'''
-import fitz  # <-- install fitz, mupdf
+import fitz  # <-- install pymupdf
 import numpy as np
 import cv2 as cv
 import os
@@ -11,7 +11,7 @@ def image_from_bytes(bytearr):
     return cv.imdecode(img, cv.IMREAD_COLOR)
 
 def page2image(page, zoom=1, return_as='png'):
-    '''return scaled pixmap or cv2 image of page'''
+    '''return scaled pixmap or cv2/numpy image of page'''
     mat = fitz.Matrix(zoom, zoom)
     imf = page.get_pixmap(matrix=mat)
     if return_as is None:
@@ -22,6 +22,9 @@ def page2image(page, zoom=1, return_as='png'):
 def get_zoom_factor(obj, target=1600, by='width'):
     '''
     get a zoom factor such that either width/height >= target
+    this function returns the zoom factor such that the output image/pdf will have the `target` size 
+    by width/height/any of the two after the pdf as been zoomed
+    @params
     by : str, criteria to use in calculating zoom factor
         any -> use the larger of width and height
         height -> use height only
@@ -43,8 +46,25 @@ def get_zoom_factor(obj, target=1600, by='width'):
         elif by == 'any':
             return w_factor if w >= h else h_factor
     
-def pdf2images(pdfpath, zoom=1, save=False, return_as='png', save_path=None):
-    '''Converts each page into image form, returns paths to images'''
+def pdf2images(pdfpath, zoom=1, save=False, return_as='png', save_path=None, start=0, end=None):
+    '''
+    Converts each page into image form, returns paths to images or images themselves
+    @params
+    pdfpath : str
+        path to pdf
+    zoom : int, float
+        the zoom factor to be applied to pdf pages
+    save : bool
+        whether to save the images and return their paths or return a list of images in memory
+    return_as : str; png or jpg
+        the format to save images as
+    save_path : str
+        the directory where to save the images
+    start : int
+        the page to start from
+    end : int, None
+        the page to stop at, exclusive
+    '''
     unext_path = pdfpath.replace('.pdf', '')
     if ".PDF" in pdfpath:
         unext_path = pdfpath.replace('.PDF', '')
@@ -54,6 +74,10 @@ def pdf2images(pdfpath, zoom=1, save=False, return_as='png', save_path=None):
         return_as = None
     
     for i, page in enumerate(doc):
+        if i<start:
+            continue
+        if end is not None and i>=end:
+            break
         impath = None
         if save_path is None:
             impath = unext_path + "_"+str(i) + '.png'
@@ -68,14 +92,17 @@ def pdf2images(pdfpath, zoom=1, save=False, return_as='png', save_path=None):
     return images
 
 def get_contour_bboxes(image,  min_size=13):
-    '''read contours and return their bounding boxes'''
-    conts, hkey = cv.findContours(image.copy(), cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
+    '''find contours and return their bounding boxes'''
+    conts, hkeys = cv.findContours(image.copy(), cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)
     is_valid_bb = lambda bb : bb[3] >= min_size and bb[2] >= min_size
     bboxes = [cv.boundingRect(cont) for cont in conts if is_valid_bb(cv.boundingRect(cont))]
     return bboxes
 
 def get_point_cross(point):
-    '''return cross coordinates surrounding this point'''
+    '''
+    return cross coordinates surrounding this point
+    cross coordinates are the coordinates surrounding a point along the x and y axes
+    '''
     x, y = point
     return [(y-1, x), (y, x+1), (y+1, x), (y, x-1)]
 
@@ -151,16 +178,17 @@ def is_overlap(bb0, bb1, inclusive=True):
 
 def bbox_in_bbox(bb0, bb1, inclusive=True):
     '''checks if bb0 is in bb1'''
-    bb0_corners =  get_corners(bb0)
-    for point in bb0_corners:
-        if not point_in_bbox(point, bb1, inclusive=inclusive):
-            return False
-    return True
+    x0, y0, w0, h0 = bb0
+    x1, y1, w1, h1 = bb1
+    x_match = ((x0>x1) or (inclusive and x1==x0)) and ((x0+w0<x1+w1) or (inclusive and x0+w0==x1+w1))
+    y_match = ((y0>y1) or (inclusive and y1==y0)) and ((y0+h0<y1+h1) or (inclusive and y0+h0==y1+h1))
+    return x_match and y_match
 
 def in_proximity(bb, bboxes, proximity, inclusive=False):
     '''
     check for bounding boxes in "surrounding" proximity of bb
     This detection does not start at the corners as seen in in_corner_proximity, it starts at every edge
+    Overlapping and internal 
     @params
     inclusive : bool, default=True
         include those that are at the proximity edge
@@ -169,7 +197,7 @@ def in_proximity(bb, bboxes, proximity, inclusive=False):
     nbb = x-proximity, y-proximity, w+proximity*2, h+proximity*2
     res = []
     for bbox in bboxes:
-        corners = libutil.get_corners(bbox)
+        corners = get_corners(bbox)
         for point in corners:
             if point_in_bbox(point, bbox, inclusive=inclusive):
                 res.append(bbox)
@@ -187,6 +215,9 @@ def get_bounds(ranges, span=4):
     '''
     returns boundaries/separators given a list of ranges
     A separator is a value that separates (two) values surrounding it
+    Use case:
+        Provided with a list of ranges, this function tries to find the bins in which these ranges exist,
+        returning the values/lines that separate them. Used in detecting rows and columns of tables.
     @params
     ranges : list
         a list of tuples or pair of values
@@ -212,6 +243,11 @@ def get_bounds(ranges, span=4):
 def remove_contained_ranges(ranges, return_containt_dict=False):
     '''
     return macro-ranges that have no containt in them
+    @params
+    ranges : list
+        the list, tuples of ranges
+        ensures list of ranges has no ranges that are inside other ranges
+    return_containt_dict : bool
     '''
     valid = []
     i = 0

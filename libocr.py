@@ -138,34 +138,38 @@ def get_ocr_worddata(image, bboxes=None, min_conf=0, padding=3, config=r'--psm 6
                 p_worddata.append((text, conf, sx, sy, ex-sx, ey-sy))
     return p_worddata
 
-def textdata_to_lines(worddata, bbox_index=2):
+def worddata_to_lines(worddata, bbox_index=2):
     '''
-    returns a list of worddata grouped by lines
+    returns a dict containing unordered line-groups; by worddata indices
     @params
     bbox_index : int, default=2
         the index where the bbox starts in the worddata tuples
     '''
-    indices = []
-    lines = []
-    while True:
-        worddata = [worddata[i] for i in range(len(worddata)) if i not in indices]
-        indices, of_line =[], []
-        if len(worddata) == 0:
-            break
-        bboxes = [data[bbox_index:bbox_index+4] for data in worddata]
-        (xx, yy, ww, hh) = bboxes[0]
+    ranges = []
+    line_data  = dict()
+    for i in range(len(worddata)):
+        x, y, w, h = worddata[i][bbox_index:bbox_index+4]
+        sy, ey = y, y+h
+        line_index=None
+        for j, (sr, er) in enumerate(ranges):
+            if (sr>=sy and sr<=ey) or (er>=sy and er<=ey) or (sy>=sr and sy<=er) or (ey>=sr and ey<=er):
+                # find distance between sy and (sr, er);
+                # check that upper is closest to upper and lower closest to lower
+                ds_sr, ds_er = abs(sy-sr), abs(sy-er)
+                s_closest_is_sr = True if ds_sr<=ds_er else False
+                de_sr, de_er = abs(ey-sr), abs(ey-er)
+                e_closest_is_er = True if de_er<=de_sr else False
+                if s_closest_is_sr and e_closest_is_er:
+                    line_index = j
+                    break
+        if line_index is None:
+            line_index = len(ranges)
+            line_data[line_index] = []
+            ranges.append((sy, ey))
+        line_data[line_index].append(i)
+    return line_data
 
-        for i, (x, y, w, h) in enumerate(bboxes):
-            dh, dy = abs(hh-h), abs(y - yy)
-            rintersect = max(hh, h) - dh - dy
-            if rintersect > 0:
-                of_line.append(worddata[i])
-                indices.append(i)
-        of_line.sort(key=lambda tpl:tpl[2])
-        lines.append([(yy, xx), of_line])
-    return [td[1] for td in sorted(lines, key=lambda tpl : tpl[0])]
-
-def get_texts(worddata, bbox_index=2, text_index=0):
+def get_texts(worddata, text_index=0, bbox_index=2, word_sep=" ", line_sep="\n"):
     '''
     returns a string organised by lines from the worddata
     @params
@@ -173,12 +177,28 @@ def get_texts(worddata, bbox_index=2, text_index=0):
         the index where the bbox starts in the worddata tuples
     text_index : int, default=0
         the index where the text exists in the worddata tuples
+    word_sep : str
+        text that separates words
+    line_sep : str
+        text that separates lines
     '''
-    texts = []
-    lines = textdata_to_lines(worddata, bbox_index=bbox_index)
-    for line in lines:
-        texts.append(' '.join([tdata[text_index] for tdata in line]))
-    return '\n'.join(texts)
+    line_indices = worddata_to_lines(worddata)
+    ydata = []
+    for ky in line_indices.keys():
+        txdata = []
+        miny, maxy = None, None
+        for idx in line_indices[ky]:
+            txt, (x, y, w, h) = worddata[idx][text_index], worddata[idx][bbox_index:bbox_index+4]
+            txdata.append((txt, x)) # sort
+            if miny is None or y<miny:
+                miny=y
+            if maxy is None or (y+h)>maxy:
+                maxy = y+h
+        txdata.sort(key=lambda tpl:tpl[1]) # sort by x
+        line = word_sep.join([txt for txt,_ in txdata])
+        ydata.append((line, miny, maxy))
+    ydata.sort(key=lambda tpl : tpl[1:])
+    return line_sep.join([dt[0] for dt in ydata])
 
 def get_json_from_worddata(worddata, as_list=True):
     '''
